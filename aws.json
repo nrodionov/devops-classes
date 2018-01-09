@@ -1,0 +1,395 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+
+  "Parameters": {
+    "ImageId": {
+      "Type": "String",
+      "Default": "ami-aa2ea6d0"
+    },
+    "SSHKey" : {
+      "Description" : "The EC2 Key Pair to allow SSH access to the instances",
+      "Type" : "AWS::EC2::KeyPair::KeyName",
+      "ConstraintDescription" : "must be the name of an existing EC2 KeyPair.",
+      "Default": "aaaa"
+    },
+    "S3Bucket": {
+      "Type": "String",
+      "Default": "devops-classes"
+    }
+  },
+
+  "Resources": {
+
+    "DevVPC": {
+      "Type": "AWS::EC2::VPC",
+      "Properties": {
+        "CidrBlock": "10.2.0.0/16",
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "Dev-VPC-${AWS::StackName}"
+            }
+          }
+        ]
+      }
+    },
+
+    "DevSubnetPrivate1": {
+      "Type": "AWS::EC2::Subnet",
+      "DependsOn": "DevVPC",
+      "Properties": {
+        "VpcId": {"Ref": "DevVPC"},
+        "AvailabilityZone": {"Fn::Select":["0",{"Fn::GetAZs": {"Ref":"AWS::Region"}}]},
+        "CidrBlock": "10.2.1.0/24",
+        "MapPublicIpOnLaunch": "True"
+      }
+    },
+
+    "DevSubnetPrivate2": {
+      "Type": "AWS::EC2::Subnet",
+      "DependsOn": "DevVPC",
+      "Properties": {
+        "VpcId": {"Ref": "DevVPC"},
+        "AvailabilityZone": {"Fn::Select":["1",{"Fn::GetAZs": {"Ref":"AWS::Region"}}]},
+        "CidrBlock": "10.2.2.0/24",
+        "MapPublicIpOnLaunch": "True"
+      }
+    },
+
+    "RouteTablePrivate1": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": {"Ref": "DevVPC"},
+        "Tags": [{"Key": "Name", "Value": "RTPrivate1"}]
+        }
+    },
+
+    "RouteTablePrivate2": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": {"Ref": "DevVPC"},
+        "Tags": [{"Key": "Name", "Value": "RTPrivate2"}]
+      }
+    },
+
+    "RTableAss1": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "RouteTableId": {"Ref": "RouteTablePrivate1"},
+        "SubnetId": {"Ref": "DevSubnetPrivate1"}
+      }
+    },
+
+    "RTableAss2": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "RouteTableId": {"Ref": "RouteTablePrivate2"},
+        "SubnetId": {"Ref": "DevSubnetPrivate2"}
+      }
+    },
+
+    "NatRoute1" : {
+      "Type" : "AWS::EC2::Route",
+      "Properties" : {
+        "RouteTableId" : { "Ref" : "RouteTablePrivate1" },
+        "DestinationCidrBlock" : "0.0.0.0/0",
+        "NatGatewayId" : { "Ref" : "NatGateway1" }
+      }
+    },
+
+    "NatRoute2" : {
+      "Type" : "AWS::EC2::Route",
+      "Properties" : {
+        "RouteTableId" : { "Ref" : "RouteTablePrivate2" },
+        "DestinationCidrBlock" : "0.0.0.0/0",
+        "NatGatewayId" : { "Ref" : "NatGateway2" }
+      }
+    },
+
+    "NetAcl1": {
+      "Type": "AWS::EC2::NetworkAcl",
+      "Properties": {
+        "VpcId": {"Ref": "DevVPC"}
+      }
+    },
+
+    "NetAclEntryEgress": {
+      "Type": "AWS::EC2::NetworkAclEntry",
+      "Properties": {
+        "NetworkAclId": {"Ref": "NetAcl1"},
+        "CidrBlock": "0.0.0.0/0",
+        "Egress": "True",
+        "Protocol": "-1",
+        "RuleAction": "Allow",
+        "RuleNumber": "100"
+      }
+    },
+
+    "NetAclEntryIngress": {
+      "Type": "AWS::EC2::NetworkAclEntry",
+      "Properties": {
+        "NetworkAclId": {"Ref": "NetAcl1"},
+        "CidrBlock": "0.0.0.0/0",
+        "Egress": "False",
+        "Protocol": "-1",
+        "RuleAction": "Allow",
+        "RuleNumber": "100"
+      }
+    },
+
+    "AclAssoc1": {
+      "Type": "AWS::EC2::SubnetNetworkAclAssociation",
+      "Properties": {
+        "SubnetId": {"Ref": "DevSubnetPrivate1"},
+        "NetworkAclId": {"Ref": "NetAcl1"}
+      }
+    },
+
+    "AclAssoc2": {
+      "Type": "AWS::EC2::SubnetNetworkAclAssociation",
+      "Properties": {
+        "SubnetId": {"Ref": "DevSubnetPrivate2"},
+        "NetworkAclId": {"Ref": "NetAcl1"}
+      }
+    },
+
+    "IGW1": {
+      "Type": "AWS::EC2::InternetGateway",
+      "Properties": {}
+    },
+
+    "IGWAttachment": {
+      "Type": "AWS::EC2::VPCGatewayAttachment",
+      "Properties":{
+        "InternetGatewayId": {"Ref": "IGW1"},
+        "VpcId": {"Ref": "DevVPC"}
+      }
+    },
+
+    "NatGateway1": {
+      "Type": "AWS::EC2::NatGateway",
+      "Properties": {
+        "AllocationId" : {"Fn::GetAtt" : ["EIP1", "AllocationId"]},
+        "SubnetId" : { "Ref" : "DevSubnetPrivate1"}
+      }
+    },
+
+    "NatGateway2": {
+      "Type": "AWS::EC2::NatGateway",
+      "Properties": {
+        "AllocationId" : {"Fn::GetAtt" : ["EIP2", "AllocationId"]},
+        "SubnetId" : { "Ref" : "DevSubnetPrivate2"}
+      }
+    },
+
+    "EIP1" : {
+      "Type" : "AWS::EC2::EIP",
+      "Properties" : {
+        "Domain" : "vpc"
+      }
+    },
+
+    "EIP2" : {
+      "Type" : "AWS::EC2::EIP",
+      "Properties" : {
+        "Domain" : "vpc"
+      }
+    },
+
+    "SecGroupELB": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupName": {"Fn::Sub": "Dev-VPC-SG-ELB-${AWS::StackName}"},
+        "GroupDescription": "Dev VPC Sec group",
+        "SecurityGroupIngress": [
+          {
+            "CidrIp": "0.0.0.0/0",
+            "FromPort": "80",
+            "ToPort": "80",
+            "IpProtocol": "tcp"
+          },
+          {
+            "CidrIp": "10.2.0.0/16",
+            "FromPort": "8080",
+            "ToPort": "8080",
+            "IpProtocol": "tcp"
+          }
+        ],
+        "VpcId": {"Ref": "DevVPC"},
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {"Fn::Sub":"Dev-VPC-SG-ELB-${AWS::StackName}"}
+          }
+        ]
+      }
+    },
+
+    "SecGroupEC2": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "DependsOn": ["SecGroupELB"],
+      "Properties": {
+        "GroupName": {"Fn::Sub": "Dev-VPC-SG-EC2-${AWS::StackName}"},
+        "GroupDescription": "Dev VPC Sec group",
+        "SecurityGroupIngress": [
+          {
+            "SourceSecurityGroupId": {"Ref": "SecGroupELB"},
+            "FromPort": "8080",
+            "ToPort": "8080",
+            "IpProtocol": "tcp"
+          }
+        ],
+        "VpcId": {"Ref": "DevVPC"},
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {"Fn::Sub":"Dev-VPC-SG-EC2-${AWS::StackName}"}
+          }
+        ]
+      }
+    },
+
+    "LaunchConfig": {
+        "Type" : "AWS::AutoScaling::LaunchConfiguration",
+        "Properties" : {
+          "AssociatePublicIpAddress" : "False",
+          "BlockDeviceMappings" : [],
+          "IamInstanceProfile" : {"Ref":"InstanceProfile"},
+          "ImageId" : {"Ref": "ImageId"},
+          "InstanceMonitoring" : "False",
+          "InstanceType" : "t2.micro",
+          "KeyName" : {"Ref":"SSHKey"},
+          "SecurityGroups" : [{"Ref":"SecGroupEC2"}],
+          "UserData": {"Fn::Base64":{"Fn::Join":["",[
+              "#!/bin/bash\n",
+              "apt-add-repository -y ppa:ansible/ansible\n",
+              "apt-get update\n",
+              "apt-get -y install ansible git gosu\n",
+              "cd /home/ubuntu\n",
+              "git init\n",
+              "git remote add origin https://github.com/nrodionov/devops-classes.git\n",
+              "git fetch\n",
+              "git checkout -t origin/master\n",
+              "chown ubuntu:ubuntu /home/ubuntu -R\n",
+              "gosu ubuntu ansible-playbook -i \"localhost,\" -c local app.yml\n"
+            ]]}
+          }
+        }
+      },
+
+      "ASGroup": {
+        "Type" : "AWS::AutoScaling::AutoScalingGroup",
+        "DependsOn": ["DevVPC", "DevSubnetPrivate1", "DevSubnetPrivate2", "IGW1"],
+        "Properties" : {
+          "AvailabilityZones" : [{"Fn::Select":["0",{"Fn::GetAZs": {"Ref":"AWS::Region"}}]},{"Fn::Select":["1",{"Fn::GetAZs": {"Ref":"AWS::Region"}}]}],
+          "Cooldown" : "600",
+          "DesiredCapacity" : "2",
+          "HealthCheckType" : "ELB",
+          "HealthCheckGracePeriod": "240",
+          "LaunchConfigurationName" : {"Ref":"LaunchConfig"},
+          "LoadBalancerNames" : [{"Ref":"ELB"}],
+          "MaxSize" : "4",
+          "MinSize" : "2",
+          "Tags" : [
+            {
+              "Key": "Name",
+              "Value": {"Fn::Sub": "${AWS::StackName}-ASG"},
+              "PropagateAtLaunch": "True"
+            }
+          ],
+          "VPCZoneIdentifier": [{"Ref":"DevSubnetPrivate1"},{"Ref":"DevSubnetPrivate2"}]
+        }
+      },
+
+      "ELB": {
+        "Type": "AWS::ElasticLoadBalancing::LoadBalancer",
+        "Properties": {
+          "AppCookieStickinessPolicy" : [
+            {
+              "CookieName" : "ELBStickness",
+              "PolicyName" : "Dev-ELB-Policy"
+            }
+          ],
+          "ConnectionSettings" : {
+            "IdleTimeout" : "60"
+          },
+          "CrossZone" : "False",
+          "HealthCheck" : {
+            "HealthyThreshold" : "5",
+            "Interval" : "20",
+            "Target" : "HTTP:8080/",
+            "Timeout" : "5",
+            "UnhealthyThreshold" : "5"
+          },
+          "Listeners" : [
+            {
+              "InstancePort" : "8080",
+              "InstanceProtocol" : "HTTP",
+              "LoadBalancerPort" : "80",
+              "Protocol" : "HTTP"
+            }
+          ],
+          "Policies" : [],
+          "Scheme" : "",
+          "SecurityGroups" : [{"Ref":"SecGroupELB"}],
+          "Subnets": [{"Ref":"DevSubnetPrivate1"},{"Ref":"DevSubnetPrivate2"}]
+        }
+      },
+
+    "IAMRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version" : "2012-10-17",
+          "Statement": [ {
+            "Effect": "Allow",
+            "Principal": {
+              "Service": [ "ec2.amazonaws.com" ]
+            },
+            "Action": [ "sts:AssumeRole" ]
+          } ]
+        },
+        "Path": "/",
+        "Policies": [
+          {
+            "PolicyName": "S3Policy",
+            "PolicyDocument": {
+              "Version" : "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:Get*",
+                    "s3:List*"
+                  ],
+                  "Resource": [
+                    {"Fn::Sub": "arn:aws:s3:::${S3Bucket}"},
+                    {"Fn::Sub": "arn:aws:s3:::${S3Bucket}/*"}
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+
+    "InstanceProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Path": "/",
+        "Roles": [{"Ref": "IAMRole"}]
+      }
+    }
+  },
+
+  "Outputs": {
+    "SiteURL": {
+      "Description": "URL of the site.",
+      "Value": {
+        "Fn::Join":["/", ["http:/",{"Fn::GetAtt":["ELB", "DNSName"]}]]
+        }
+      }
+     }
+}

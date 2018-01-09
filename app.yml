@@ -1,0 +1,65 @@
+---
+- hosts: all
+  become: yes
+  become_method: sudo
+  tasks:
+  - name: update cache
+    apt: name=python-software-properties state=present update_cache=yes cache_valid_time=43200
+  - name: install packages
+    apt: name={{item}} state=installed
+    with_items:
+      - virtualenv
+      - python-pip
+      - python-dev
+      - nginx
+
+- hosts: all
+  tasks:
+  - name: install modules in a virtualenv
+    pip:
+      requirements: /home/ubuntu/pipreq.txt
+      virtualenv: /home/ubuntu/app/env
+      virtualenv_python: python2.7
+
+- hosts: all
+  become: yes
+  become_method: sudo
+  tasks:
+  - name: template systemd service config
+    copy:
+      src: .service
+      dest: /etc/systemd/system/app.service
+
+  - name: start systemd app service
+    service:
+      name: app.service
+      state: restarted
+      enabled: yes
+
+  - name: template nginx site config
+    template:
+      src: .nginx
+      dest: /etc/nginx/sites-available/app
+
+  - name: remove default nginx site config
+    file:
+      path: /etc/nginx/sites-enabled/default
+      state: absent
+
+  - name: enable nginx site
+    file:
+      src: /etc/nginx/sites-available/app
+      dest: /etc/nginx/sites-enabled/default
+      state: link
+      force: yes
+
+  - name: restart nginx
+    service:
+      name: nginx
+      state: restarted
+      enabled: yes
+
+  - name: open firewall for nginx
+    ufw:
+      rule: allow
+      name: Nginx Full
